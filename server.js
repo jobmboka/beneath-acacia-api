@@ -9,19 +9,37 @@ app.use(express.json());
 // ── ENV VARS (set these in Render dashboard) ──
 const CONSUMER_KEY      = process.env.MPESA_CONSUMER_KEY;
 const CONSUMER_SECRET   = process.env.MPESA_CONSUMER_SECRET;
-const SHORTCODE         = process.env.MPESA_SHORTCODE;       // Your Till/Paybill number
-const PASSKEY           = process.env.MPESA_PASSKEY;         // Lipa Na MPesa passkey
+const SHORTCODE         = process.env.MPESA_SHORTCODE;       // Sandbox: 174379
+const PASSKEY           = process.env.MPESA_PASSKEY;         // Sandbox passkey from Test Credentials
 const CALLBACK_URL      = process.env.MPESA_CALLBACK_URL;   // Your Render URL + /mpesa/callback
+const IS_SANDBOX        = process.env.MPESA_SANDBOX !== 'false'; // default true until go-live
 const PORT              = process.env.PORT || 3000;
 
-// In-memory store for pending payments { checkoutRequestId: { email, name, phone, resolve } }
+// ── API BASE URLs ──
+const MPESA_BASE = IS_SANDBOX
+  ? 'https://sandbox.safaricom.co.ke'
+  : 'https://api.safaricom.co.ke';
+
+// ── STARTUP VALIDATION ──
+const missingVars = ['MPESA_CONSUMER_KEY','MPESA_CONSUMER_SECRET','MPESA_SHORTCODE','MPESA_PASSKEY','MPESA_CALLBACK_URL']
+  .filter(v => !process.env[v]);
+if (missingVars.length) {
+  console.error('❌ Missing environment variables:', missingVars.join(', '));
+  console.error('Set these in your Render dashboard under Environment.');
+}
+console.log(`✅ Starting in ${IS_SANDBOX ? 'SANDBOX' : 'PRODUCTION'} mode`);
+console.log(`✅ Using base URL: ${MPESA_BASE}`);
+console.log(`✅ Shortcode: ${SHORTCODE}`);
+console.log(`✅ Callback URL: ${CALLBACK_URL}`);
+
+// In-memory store for pending payments
 const pendingPayments = {};
 
 // ── 1. GET OAUTH TOKEN ──
 async function getToken() {
   const auth = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString('base64');
   const res = await axios.get(
-    'https://api.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials',
+    `${MPESA_BASE}/oauth/v1/generate?grant_type=client_credentials`,
     { headers: { Authorization: `Basic ${auth}` } }
   );
   return res.data.access_token;
@@ -49,13 +67,15 @@ app.post('/mpesa/stkpush', async (req, res) => {
 
   try {
     const token = await getToken();
+    console.log('✅ Got M-Pesa token, sending STK push to:', formattedPhone);
+
     const stkRes = await axios.post(
-      'https://api.safaricom.co.ke/mpesa/stkpush/v1/processrequest',
+      `${MPESA_BASE}/mpesa/stkpush/v1/processrequest`,
       {
         BusinessShortCode: SHORTCODE,
         Password: password,
         Timestamp: timestamp,
-        TransactionType: 'CustomerPayBillOnline', // or 'CustomerPayBillOnline' for paybill
+        TransactionType: 'CustomerPayBillOnline',
         Amount: amount,
         PartyA: formattedPhone,
         PartyB: SHORTCODE,
@@ -66,6 +86,8 @@ app.post('/mpesa/stkpush', async (req, res) => {
       },
       { headers: { Authorization: `Bearer ${token}` } }
     );
+
+    console.log('📲 STK Push response:', JSON.stringify(stkRes.data));
 
     const { CheckoutRequestID, ResponseCode, CustomerMessage } = stkRes.data;
 
@@ -85,8 +107,9 @@ app.post('/mpesa/stkpush', async (req, res) => {
       return res.status(400).json({ error: 'STK push failed', details: stkRes.data });
     }
   } catch (err) {
-    console.error('STK Push error:', err.response?.data || err.message);
-    return res.status(500).json({ error: 'Failed to initiate payment', details: err.response?.data });
+    const errData = err.response?.data || err.message;
+    console.error('❌ STK Push error:', JSON.stringify(errData));
+    return res.status(500).json({ error: 'Failed to initiate payment', details: errData });
   }
 });
 
