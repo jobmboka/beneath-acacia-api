@@ -55,7 +55,7 @@ app.post('/mpesa/stkpush', async (req, res) => {
         BusinessShortCode: SHORTCODE,
         Password: password,
         Timestamp: timestamp,
-        TransactionType: 'CustomerBuyGoodsOnline', // or 'CustomerPayBillOnline' for paybill
+        TransactionType: 'CustomerPayBillOnline', // or 'CustomerPayBillOnline' for paybill
         Amount: amount,
         PartyA: formattedPhone,
         PartyB: SHORTCODE,
